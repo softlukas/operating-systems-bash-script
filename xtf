@@ -1,0 +1,283 @@
+#!/bin/bash
+
+export POSIXLY_CORRECT=yes
+
+print_help() {
+    echo help
+}
+
+print_status() {
+    local user=$user
+    local logFile=$file
+    #deklarujeme asociativne pole (nieco na styl dictionary)
+    declare -A currenciesBalance
+    #IFS je oddelovac, citame postupne riadky a jednolive hodnoty
+    while IFS=';' read -r trader timestamp currency amount; do
+        if [[ $trader == $user ]]; then
+        
+            if [[ -z ${currenciesBalance[$currency]} ]]; then
+                    currenciesBalance[$currency]=0
+            fi
+            currenciesBalance[$currency]=$(awk "BEGIN { printf \"%0.4f\", ${currenciesBalance[$currency]} + $amount }")
+        fi
+    done < $logFile
+    for currency in "${!currenciesBalance[@]}"; do
+        echo "$currency : ${currenciesBalance[$currency]}"
+    done | sort
+}
+
+
+# Funkce pro zpracování příkazu list
+process_list_command() {
+   # Výchozí hodnota pro formát datumu a času
+   # Výchozí hodnota pro formát datumu a času
+   # Vytvoření skriptu pro awk pomocí procesové substituce
+    # Výchozí hodnota pro formát datumu a času
+    date_format="%Y-%m-%d %H:%M:%S"
+    
+    # Filtr pro datum a čas - v případě nezadání filtrů nastavíme filtr na neomezeno
+    filter=""
+    if [[ -n "$after" ]]; then
+        filter+=" -n "
+        filter+="$after"
+    fi
+    if [[ -n "$before" ]]; then
+        filter+=" -p "
+        filter+="$before"
+    fi
+
+    # Filtr pro měnu
+    currency_filter=""
+    if [[ -n "$currency" ]]; then
+        currency_filter=" -c $currency"
+    fi
+
+    # Výpis záznamů pro daného uživatele s aplikovanými filtry
+    
+    
+    grep -hE "^$user;" "${log_files[@]}" | awk -F ';' $filter $currency_filter '{print $1";"$2";"$3";"$4}'
+
+    
+}
+
+process_status_command() {
+    # Vytvoření dočasného skriptu pro awk v jiném adresáři
+    awk_script=$(mktemp -p /dev/shm)
+
+    # Vytvoření skriptu pro awk pomocí procesové substituce
+    awk 'BEGIN { FS = ";" } {
+        if ($1 == user) {
+            balance[$3] += $4
+        }
+    }
+    END {
+        for (currency in balance) {
+            printf "%s : %.4f\n", currency, balance[currency]
+        }
+    }' > "$awk_script"
+
+    # Aplikace filtrů na vstup a výpis pomocí awk
+    grep -E "^$user;" "${log_files[@]}" | awk -v user="$user" -f "$awk_script"
+
+    # Odstranění dočasného skriptu pro awk automaticky po ukončení skriptu
+}
+
+
+# Funkce pro zpracování příkazu list-currency
+process_list_currency_command() {
+    # Aplikace filtrů na vstup a výpis unikátních kódů měn pomocí awk
+    grep -E "^$user;" "${log_files[@]}" | awk -F';' -v user="$user" '{ if ($1 == user) print $3 }' | sort -u
+}
+
+
+print_currency_list() {
+    
+    for file in "${log_files[@]}"; do
+        if [[ "$file" == *.gz ]]; then
+            zcat "$file" | grep "^$user;" | cut -d';' -f3 | sort | uniq
+        else
+            grep "^$user;" "$file" | cut -d';' -f3 | sort | uniq
+        fi
+    done
+}
+
+
+profit() {
+    local user="$1"
+    local log_files=("${@:2}")  # Všechny argumenty kromě prvního (uživatelské jméno)
+
+    # Výchozí hodnota pro formát datumu a času
+    local date_format="%Y-%m-%d %H:%M:%S"
+
+    # Výchozí hodnota pro fiktivní zisk
+    local profit_percentage="${XTF_PROFIT:-20}"
+
+    # Filtr pro datum a čas - v případě nezadání filtrů nastavíme filtr na neomezeno
+    local filter=""
+    if [[ -n "$after" ]]; then
+        filter+=" -v after=\"$after\""
+    fi
+    if [[ -n "$before" ]]; then
+        filter+=" -v before=\"$before\""
+    fi
+
+    # Filtr pro měnu
+    local currency_filter=""
+    if [[ -n "$currency" ]]; then
+        currency_filter=" -v currency=\"$currency\""
+    fi
+
+    # Funkce pro výpočet fiktivního zisku
+    calculate_profit_test() {
+        local balance="$1"
+        local profit_percentage="$2"
+
+        # Přepočet fiktivního zisku
+        local profit=$(echo "scale=4; $balance * $profit_percentage / 100" | bc)
+
+        # Výsledný zůstatek s fiktivním ziskem
+        echo $(echo "$balance + $profit" | bc)
+    }
+
+    # Výpis stavu účtu pro daného uživatele s aplikovanými filtry
+    grep -hE "^$user;" "${log_files[@]}" | awk -F ';' $filter $currency_filter '{
+        # Pokud je nastavený filtr pro měnu a měna v záznamu neodpovídá filtru, pokračujeme na další záznam
+        if (currency != "" && $3 != currency) {
+            next
+        }
+
+        # Vypočteme zůstatek účtu (součet hodnoty transakcí)
+        balances[$3] += $4
+    }
+    END {
+        # Pro každou měnu vypočteme fiktivní zisk a vypíšeme stav účtu
+        for (currency in balances) {
+            profit = calculate_profit(balances[currency], profit_percentage)
+            printf "%s:%.4f\n", currency, profit
+        }
+    }' -
+}
+
+calculate_profit() {
+    local user=$user
+    local logFile=$file
+
+    # Deklarácia asociatívneho poľa pre uchovávanie stavu účtu
+    declare -A currenciesBalance
+
+    # Presmerovanie vstupu zo súboru do slučky while
+    while IFS=';' read -r trader timestamp currency amount; do
+        if [[ $trader == $user ]]; then
+            if [[ -z ${currenciesBalance[$currency]} ]]; then
+                currenciesBalance[$currency]=0
+            fi
+            
+            currenciesBalance[$currency]=$(awk "BEGIN { print ${currenciesBalance[$currency]} + $amount }")
+        fi
+    done < "$logFile"
+
+    # Ziskové percento z prostredia alebo 20% ako východzia hodnota
+    local profit_percentage=${XTF_PROFIT:-20}
+    #echo $profit_percentage
+    # Výpočet zisku pre každú menu
+    for currency in "${!currenciesBalance[@]}"; do
+       
+        # Vypočet zisku pre danú menu
+        
+        local current_balance=${currenciesBalance[$currency]}
+
+        if [[ $(awk "BEGIN { if ($current_balance >= 0) print 1; else print 0 }") -eq 1 ]]; then
+            local profit=$(awk "BEGIN { printf \"%.4f\", $current_balance * $profit_percentage / 100 }")
+            local new_balance=$(awk "BEGIN { printf \"%.4f\", $current_balance + $profit }")
+        else
+            local new_balance=$(awk "BEGIN { printf \"%.4f\", $current_balance }")
+        fi
+
+
+        # Výpis zisku pre danú menu
+        echo "$currency : $new_balance"
+    done | sort
+}
+
+# Pokud je příkaz list, provedeme funkci process_list_command
+
+
+
+
+# Zpracování vstupních argumentů
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -h|--help)
+            print_help
+            ;;
+        list|list-currency|status|profit)
+            if [[ -z "$command" ]]; then
+                command="$1"
+            else
+                exit 1
+            fi
+            shift
+            ;;
+        -a)
+            after="$2"
+            shift 2
+            ;;
+        -b)
+            before="$2"
+            shift 2
+            ;;
+        -c)
+            currency="$2"
+            shift 2
+            ;;
+        *)
+            if [[ -z "$user" ]]; then
+                user="$1"
+            elif ! [[ "$1" =~ ".log" || "$1" =~ ".gz" ]]; then
+                exit 1
+            else
+                log_files+=("$1")
+            fi
+            shift
+            ;;
+    esac
+done
+
+# Zbývající argumenty jsou UŽIVATEL a LOG (a další soubory LOG)
+
+if [[ -z "$command" ]]; then
+    command=list
+fi
+
+
+if [[ "$command" == "list" ]]; then
+    if [[ -n "$log_files" ]]; then
+        process_list_command
+        
+    fi
+fi
+
+if [[ "$command" == "list-currency" ]]; then
+    print_currency_list
+    
+    
+fi
+
+if [[ "$command" == "profit" ]]; then
+    for file in "${log_files[@]}"; do
+        calculate_profit "$user" "$file"
+        
+    done
+    
+fi
+
+if [[ "$command" == "status" ]]; then
+    for file in "${log_files[@]}"; do
+        print_status "$user" "$file"
+        
+    done
+    
+fi
+
+
+
