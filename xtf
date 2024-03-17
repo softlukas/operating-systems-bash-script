@@ -9,16 +9,26 @@ print_help() {
 print_status() {
     local user=$user
     local logFile=$file
+    local dateBefore=$before
+    local dateAfter=$after
+    local currencyFilter=$currency
+
     #deklarujeme asociativne pole (nieco na styl dictionary)
     declare -A currenciesBalance
     #IFS je oddelovac, citame postupne riadky a jednolive hodnoty
     while IFS=';' read -r trader timestamp currency amount; do
         if [[ $trader == $user ]]; then
-        
-            if [[ -z ${currenciesBalance[$currency]} ]]; then
-                    currenciesBalance[$currency]=0
+             if [[ -z $dateAfter || ($dateAfter < $timestamp && -n $dateAfter) ]]; then
+                if [[ -z $dateBefore || ($dateBefore > $timestamp && -n $dateBefore) ]]; then
+                    if [[ -z $currencyFilter || ($currencyFilter == $currency && -n $currencyFilter) ]]; then
+
+                        if [[ -z ${currenciesBalance[$currency]} ]]; then
+                                currenciesBalance[$currency]=0
+                        fi
+                        currenciesBalance[$currency]=$(awk "BEGIN { printf \"%0.4f\", ${currenciesBalance[$currency]} + $amount }")
+                    fi
+                fi
             fi
-            currenciesBalance[$currency]=$(awk "BEGIN { printf \"%0.4f\", ${currenciesBalance[$currency]} + $amount }")
         fi
     done < $logFile
     for currency in "${!currenciesBalance[@]}"; do
@@ -161,18 +171,28 @@ profit() {
 calculate_profit() {
     local user=$user
     local logFile=$file
+    local dateBefore=$before
+    local dateAfter=$after
+    local currencyFilter=$currency
 
+    
     # Deklarácia asociatívneho poľa pre uchovávanie stavu účtu
     declare -A currenciesBalance
-
+    #echo $currencyFilter
     # Presmerovanie vstupu zo súboru do slučky while
+    
     while IFS=';' read -r trader timestamp currency amount; do
         if [[ $trader == $user ]]; then
-            if [[ -z ${currenciesBalance[$currency]} ]]; then
-                currenciesBalance[$currency]=0
+            if [[ -z $dateAfter || ($dateAfter < $timestamp && -n $dateAfter) ]]; then
+                if [[ -z $dateBefore || ($dateBefore > $timestamp && -n $dateBefore) ]]; then
+                    if [[ -z $currencyFilter || ($currencyFilter == $currency && -n $currencyFilter) ]]; then
+                        if [[ -z ${currenciesBalance[$currency]} ]]; then
+                            currenciesBalance[$currency]=0
+                        fi
+                        currenciesBalance[$currency]=$(awk "BEGIN { print ${currenciesBalance[$currency]} + $amount }")
+                    fi
+                fi
             fi
-            
-            currenciesBalance[$currency]=$(awk "BEGIN { print ${currenciesBalance[$currency]} + $amount }")
         fi
     done < "$logFile"
 
@@ -265,7 +285,7 @@ fi
 
 if [[ "$command" == "profit" ]]; then
     for file in "${log_files[@]}"; do
-        calculate_profit "$user" "$file"
+        calculate_profit "$user" "$file" "$after" "$before" "$currency"
         
     done
     
@@ -273,7 +293,7 @@ fi
 
 if [[ "$command" == "status" ]]; then
     for file in "${log_files[@]}"; do
-        print_status "$user" "$file"
+        print_status "$user" "$file" "$after" "$before" "$currency"
         
     done
     
