@@ -39,34 +39,23 @@ print_status() {
 
 # Funkce pro zpracování příkazu list
 process_list_command() {
-   # Výchozí hodnota pro formát datumu a času
-   # Výchozí hodnota pro formát datumu a času
-   # Vytvoření skriptu pro awk pomocí procesové substituce
-    # Výchozí hodnota pro formát datumu a času
-    date_format="%Y-%m-%d %H:%M:%S"
-    
-    # Filtr pro datum a čas - v případě nezadání filtrů nastavíme filtr na neomezeno
-    filter=""
-    if [[ -n "$after" ]]; then
-        filter+=" -n "
-        filter+="$after"
-    fi
-    if [[ -n "$before" ]]; then
-        filter+=" -p "
-        filter+="$before"
-    fi
+    local user=$user
+    local logFile=$file
+    local dateBefore=$before
+    local dateAfter=$after
+    local currencyFilter=$currency 
 
-    # Filtr pro měnu
-    currency_filter=""
-    if [[ -n "$currency" ]]; then
-        currency_filter=" -c $currency"
-    fi
-
-    # Výpis záznamů pro daného uživatele s aplikovanými filtry
-    
-    
-    grep -hE "^$user;" "${log_files[@]}" | awk -F ';' $filter $currency_filter '{print $1";"$2";"$3";"$4}'
-
+    while IFS=';' read -r trader timestamp currency amount; do
+        if [[ $trader == $user ]]; then
+            if [[ -z $dateAfter || ($dateAfter < $timestamp && -n $dateAfter) ]]; then
+                if [[ -z $dateBefore || ($dateBefore > $timestamp && -n $dateBefore) ]]; then
+                    if [[ -z $currencyFilter || ($currencyFilter == $currency && -n $currencyFilter) ]]; then
+                        echo "$trader;$timestamp;$currency;$amount"
+                    fi
+                fi
+            fi
+        fi
+    done < "$logFile"
     
 }
 
@@ -217,6 +206,7 @@ calculate_profit() {
         # Výpis zisku pre danú menu
         echo "$currency : $new_balance"
     done | sort
+    
 }
 
 # Pokud je příkaz list, provedeme funkci process_list_command
@@ -271,10 +261,13 @@ fi
 
 
 if [[ "$command" == "list" ]]; then
-    if [[ -n "$log_files" ]]; then
-        process_list_command
-        
-    fi
+    for file in "${log_files[@]}"; do
+        if [[ $file == *.gz ]]; then
+            zcat "$file" | process_list_command "$user" "$after" "$before" "$currency"
+        else
+            process_list_command "$user" "$after" "$before" "$currency"
+        fi
+    done
 fi
 
 if [[ "$command" == "list-currency" ]]; then
@@ -285,17 +278,24 @@ fi
 
 if [[ "$command" == "profit" ]]; then
     for file in "${log_files[@]}"; do
-        calculate_profit "$user" "$file" "$after" "$before" "$currency"
+        if [[ $file == *.gz ]]; then
+            zcat "$file" | calculate_profit "$user" - "$after" "$before" "$currency"
+        else
+            calculate_profit "$user" "$file" "$after" "$before" "$currency"
+        fi
         
-    done
+    done | sort -u
     
 fi
 
 if [[ "$command" == "status" ]]; then
     for file in "${log_files[@]}"; do
-        print_status "$user" "$file" "$after" "$before" "$currency"
-        
-    done
+        if [[ $file == *.gz ]]; then
+            zcat "$file" | print_status "$user" "$file" "$after" "$before" "$currency"
+        else
+            print_status "$user" "$file" "$after" "$before" "$currency"
+        fi
+    done | sort -u
     
 fi
 
