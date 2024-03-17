@@ -1,5 +1,8 @@
 #!/bin/bash
 
+#1. projekt IOS, script v shelli
+#Autor: Lukáš Šimoník, xsimonl00
+
 export POSIXLY_CORRECT=yes
 #regex pre zistenie ci je datum korektny
 date_regex='^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}$'
@@ -10,46 +13,56 @@ check_arguments() {
     local dateBefore=$before
     local userName=$user
     local curr=$currency
-    #ulozime si dlzku currency
+
+    #ulozime si dlzku meny
     local currLength=${#curr}
-    #pokial je currency zadana, a jej dlzka nie je 3 -> chyba
+    #pokial je mena zadana, a jej dlzka nie je 3 -> chyba
     if [[ ! $currLength -eq 3 && ! currLength -eq 0 ]]; then
+        echo "Mena nie je dlzky 3">&2
         exit 1
     fi
-
+    #ak mena obsahuje cisla je to tiez chyba
     if [[ "$curr" =~ [0-9] ]]; then
+        echo "Mena obsahuje cislice">&2
         exit 1
     fi
 
-    # Ověření, zda je datum ve správném formátu pomocí regexu
+    #porovnavame oba datumy s regex, ak su nastavene, a nezodpovedaju regex formatu -> chyba
     if [[ -n $dateAfter && ! $dateAfter =~ $date_regex ]]; then
+        echo "Datum je v nekorektnom formate">&2
         exit 1
     fi
     if [[ -n $dateBefore && ! $dateBefore =~ $date_regex ]]; then
+        echo "Datum je v nekorektnom formate">&2
         exit 1
     fi
 
     if [[ -z $userName || "$1" =~ ".log" || "$1" =~ ".gz" ]]; then
+        echo "Chyba meno uzivatela">&2
         exit 1
     fi
 
     
 
 }
-
+#skontroluje, ci zadane subory neobsahuju chybu, a tiez ci existuju
 check_file() {
     local logFile="$file"
-
+    #subor neexistuje
     if [ ! -e "$file" ]; then
+        echo "Subor $file neexistuje">&2
         exit 1
     fi
-
+    #kazdy riadok suboru kontrolujeme ci je korektny
     while IFS=';' read -r trader timestamp curr amount; do
+        #ak chyba akakolvek zo styroch poloziek
         if [[  -z $trader || -z $timestamp || -z $curr || -z $amount ]]; then
+            echo "V subore $file chyba polozka">&2
             exit 1
         fi
-        
+        #ak je datum nekorektny
         if [[ ! $timestamp =~ $date_regex ]]; then
+            echo "V subore $file je neplatny datum">&2
             exit 1
         fi
     done < "$logFile"
@@ -57,50 +70,29 @@ check_file() {
 
 
 print_help() {
-    echo help
+    echo Nápoveda k programu:
+    echo Skript filtruje dáta o tranzakciách na kryptomenových burzách podľa zadaných parametrov.
+    echo ./xtf list Trader1 subor.log - vypise zaznamy Trader1 zo suboru subor.log
+    echo "./xtf -c ETH Trader1 subor.log - vypise zaznamy Trader1 zo suboru subor.log pre menu ETH"
+    echo "./xtf -a 2024-03-16 08:00:00 Trader1 subor.log - vypise zaznamy Trader1 zo suboru subor.log pre transakcie po zadanom case"
+    echo ./xtf status Trader1 subor.log - vypise status zoskupeny do jednotlivych mien
+    echo ./xtf status Trader1 subor.log -  to iste ako status, zapocita sa vsak fiktivny profit
+    echo filtre a prikazy je mozne kombinovat
 }
-
+#spracuje prikaz status
 print_status() {
+    #ulozenie do premennych
     local user=$user
-    local files="${log_files[@]}"
     local dateBefore=$before
     local dateAfter=$after
     local currencyFilter=$currency
 
+    #asoc. pole kde key budu meny
     declare -A currenciesBalance
-    for file in "${log_files[@]}"; do
-        
-        if [[ $file == *.gz ]]; then
-           
-            outputCommand="gunzip -c"
-
-        else
-            
-            outputCommand="cat"
-        fi
-            #output=$(cat "$file")
-            
-        #fi
-            #deklarujeme asociativne pole (nieco na styl dictionary)
-        
-        #IFS je oddelovac, citame postupne riadky a jednolive hodnoty
-        while IFS=';' read -r trader timestamp currency amount; do
-            if [[ $trader == $user ]]; then
-                if [[ -z $dateAfter || ($dateAfter < $timestamp && -n $dateAfter) ]]; then
-                    if [[ -z $dateBefore || ($dateBefore > $timestamp && -n $dateBefore) ]]; then
-                        if [[ -z $currencyFilter || ($currencyFilter == $currency && -n $currencyFilter) ]]; then
-
-                            if [[ -z ${currenciesBalance[$currency]} ]]; then
-                                    currenciesBalance[$currency]=0
-                            fi
-                            currenciesBalance[$currency]=$(awk "BEGIN { printf \"%0.4f\", ${currenciesBalance[$currency]} + $amount }")
-                        fi
-                    fi
-                fi
-            fi
-        done < <($outputCommand "$file")
-        
-    done
+    #funkcia naplni asoc pole tak ze pri tom aplikuje filtre
+    apply_filters "${log_files[@]}" $user $dateBefore $dateAfter $currencyFilter    
+    
+    #jednolive polozky v asoc. poli vypiseme
     for currency in "${!currenciesBalance[@]}"; do
         echo "$currency : ${currenciesBalance[$currency]}"
     done | sort -u
@@ -110,14 +102,48 @@ print_status() {
     
 }
 
+apply_filters() {
+    #pre vsetky subory
+    for file in "${log_files[@]}"; do
+        #rozlusjeme prikaz pre subor ktory ide do cyklu podla toho ci je gz alebo nie
+        if [[ $file == *.gz ]]; then
+            outputCommand="gunzip -c"
+        else
+            outputCommand="cat"
+        fi
+        #IFS je oddelovac, citame postupne riadky a jednolive hodnoty
+        while IFS=';' read -r trader timestamp currency amount; do
+            #vybereme len zaznamy pre daneho usera
+            if [[ $trader == $user ]]; then
+                #pokial je nastaveny dateafter a je mensi ako datum v subore
+                if [[ -z $dateAfter || ($dateAfter < $timestamp && -n $dateAfter) ]]; then
+                    #to iste pre dateBefore, akurat musi byt vacsi
+                    if [[ -z $dateBefore || ($dateBefore > $timestamp && -n $dateBefore) ]]; then
+                        #kontrola ci zaznam odpoveda danej filtrovanej mene
+                        if [[ -z $currencyFilter || ($currencyFilter == $currency && -n $currencyFilter) ]]; then
+                            #pokial este tento key v poli nie je tak ho vytvorime
+                            if [[ -z ${currenciesBalance[$currency]} ]]; then
+                                    currenciesBalance[$currency]=0
+                            fi
+                            #vypocita novu hodnotu pre menu sctinanim predoslej a tej na akutalnom riadku
+                            currenciesBalance[$currency]=$(awk "BEGIN { printf \"%0.4f\", ${currenciesBalance[$currency]} + $amount }")
+                        fi
+                    fi
+                fi
+            fi
+        done < <($outputCommand "$file")
+    done
+}
+
 # Funkce pro zpracování příkazu list
 process_list_command() {
+    #nacitanie premennych
     local user=$user
     local logFile=$file
     local dateBefore=$before
     local dateAfter=$after
     local currencyFilter=$currency 
-    
+    #toto je rovnake ako vo fnc aplly_filters
     while IFS=';' read -r trader timestamp currency amount; do
         if [[ $trader == $user ]]; then
             if [[ -z $dateAfter || ($dateAfter < $timestamp && -n $dateAfter) ]]; then
@@ -131,18 +157,21 @@ process_list_command() {
     done < "$logFile"
     
 }
-
+#spracuje prikaz list-currency
 print_currency_list() {
-    
+    #pre kazdy subor
     for file in "${log_files[@]}"; do
         if [[ "$file" == *.gz ]]; then
+            #to iste ako v else akurat sa este spracovava gz file prikazom zcat
             zcat "$file" | grep "^$user;" | cut -d';' -f3 | sort | uniq
         else
+            #hlada v subore, oddeluje ho ;, vracia treti slpec, zoradi ho a necha len unikatne hodnoty
             grep "^$user;" "$file" | cut -d';' -f3 | sort | uniq
         fi
     done | sort
 }
 
+#status s fiktivnym profitom
 calculate_profit() {
     local user=$user
     
@@ -151,54 +180,25 @@ calculate_profit() {
     local currencyFilter=$currency
 
     declare -A currenciesBalance
-    for file in "${log_files[@]}"; do
-        
-        if [[ $file == *.gz ]]; then
-           
-            outputCommand="gunzip -c"
 
-        else
-            
-            outputCommand="cat"
-        fi
+    #aplikacia filtrov
+    apply_filters "${log_files[@]}" $user $dateBefore $dateAfter $currencyFilter
     
-
-        while IFS=';' read -r trader timestamp currency amount; do
-            if [[ $trader == $user ]]; then
-                if [[ -z $dateAfter || ($dateAfter < $timestamp && -n $dateAfter) ]]; then
-                    if [[ -z $dateBefore || ($dateBefore > $timestamp && -n $dateBefore) ]]; then
-                        if [[ -z $currencyFilter || ($currencyFilter == $currency && -n $currencyFilter) ]]; then
-                            if [[ -z ${currenciesBalance[$currency]} ]]; then
-                                currenciesBalance[$currency]=0
-                            fi
-                            currenciesBalance[$currency]=$(awk "BEGIN { print ${currenciesBalance[$currency]} + $amount }")
-                        fi
-                    fi
-                fi
-            fi
-        done < <($outputCommand "$file")
-    done
-    # Deklarácia asociatívneho poľa pre uchovávanie stavu účtu
-   
-    #echo $currencyFilter
-    # Presmerovanie vstupu zo súboru do slučky while
-    
-    
-
-    # Ziskové percento z prostredia alebo 20% ako východzia hodnota
+    # pokial hodnota nie je nastavena, nastavime profit na 20 percent
     local profit_percentage=${XTF_PROFIT:-20}
-    #echo $profit_percentage
-    # Výpočet zisku pre každú menu
+    #pre kazdu menu v asoc. poli vypocitame zisk
     for currency in "${!currenciesBalance[@]}"; do
        
-        # Vypočet zisku pre danú menu
         
+        #nastavvime si aktualny balance
         local current_balance=${currenciesBalance[$currency]}
-
+        #podmienka ci je aktualny zostatok kladny alebo 0
         if [[ $(awk "BEGIN { if ($current_balance >= 0) print 1; else print 0 }") -eq 1 ]]; then
+            #spocitame profit pripocitame k balance
             local profit=$(awk "BEGIN { printf \"%.4f\", $current_balance * $profit_percentage / 100 }")
             local new_balance=$(awk "BEGIN { printf \"%.4f\", $current_balance + $profit }")
         else
+            #ak je hodnota zaporna tak sa nic nepripocitava
             local new_balance=$(awk "BEGIN { printf \"%.4f\", $current_balance }")
         fi
 
@@ -208,21 +208,20 @@ calculate_profit() {
     
 }
 
-# Pokud je příkaz list, provedeme funkci process_list_command
-
-
-
-
 # Zpracování vstupních argumentů
+#kym pocet arg je vacsi nez 0
 while [[ $# -gt 0 ]]; do
+    #casom filtrujeme, a postupne shiftujeme
     case "$1" in
         -h|--help)
             print_help
+            exit 0
             ;;
         list|list-currency|status|profit)
             if [[ -z "$command" ]]; then
                 command="$1"
             else
+                echo "Chyba zadane dva prikazy">&2
                 exit 1
             fi
             shift
@@ -231,6 +230,7 @@ while [[ $# -gt 0 ]]; do
         if [[ -z "$after" ]]; then
             after="$2"
         else
+            echo "Chyba dva krat zadany datum after">&2
             exit 1
         fi
             shift 2
@@ -239,6 +239,7 @@ while [[ $# -gt 0 ]]; do
         if [[ -z "$before" ]]; then
             before="$2"
         else
+            echo "Chyba dva krat zadany datum before">&2
             exit 1
         fi
             shift 2
@@ -252,6 +253,7 @@ while [[ $# -gt 0 ]]; do
             if [[ -z "$user" ]]; then
                 user="$1"
             elif ! [[ "$1" =~ ".log" || "$1" =~ ".gz" ]]; then
+                echo "Chybne zadany subor">&2
                 exit 1
             else
                 log_files+=("$1")
@@ -261,10 +263,11 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Zbývající argumenty jsou UŽIVATEL a LOG (a další soubory LOG)
 
+#kontrola spravnosti zadanych argumentov
 check_arguments $after $before $currency $user
 
+#kazdy subor skontrolujeme
 for file in "${log_files[@]}"; do
     if [[ $file == *.gz ]]; then
         zcat "$file" | check_file "$file"
@@ -273,12 +276,14 @@ for file in "${log_files[@]}"; do
     fi
 done
 
+#pokial nie je zadany prikaz, vykona sa list
 if [[ -z "$command" ]]; then
     command=list
 fi
 
-
+#ak je prikaz list
 if [[ "$command" == "list" ]]; then
+    #tak pre kazdy subor list spracujeme, rozlisujeme ci sa nejedna o .gz file
     for file in "${log_files[@]}"; do
         if [[ $file == *.gz ]]; then
             zcat "$file" | process_list_command "$user" "$after" "$before" "$currency"
@@ -289,17 +294,18 @@ if [[ "$command" == "list" ]]; then
     done
 fi
 
+#ak je prikaz list-currency
 if [[ "$command" == "list-currency" ]]; then
     print_currency_list
     
     
 fi
-
+#profit
 if [[ "$command" == "profit" ]]; then
     
     calculate_profit "$user" "${log_files[@]}" "$after" "$before" "$currency"
 fi
-
+#vypisanie statusu
 if [[ "$command" == "status" ]]; then
     
     print_status "$user" "${log_files[@]}" "$after" "$before" "$currency"
