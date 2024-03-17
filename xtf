@@ -27,8 +27,8 @@ check_arguments() {
 check_file() {
     local logFile="$file"
 
-    while IFS=';' read -r trader timestamp currency amount; do
-        if [[  -z $trader || -z $timestamp || -z $currency || -z $amount ]]; then
+    while IFS=';' read -r trader timestamp curr amount; do
+        if [[  -z $trader || -z $timestamp || -z $curr || -z $amount ]]; then
             exit 1
         fi
         
@@ -80,17 +80,17 @@ process_list_command() {
     local dateBefore=$before
     local dateAfter=$after
     local currencyFilter=$currency 
-
+    
     while IFS=';' read -r trader timestamp currency amount; do
-            if [[ $trader == $user ]]; then
-                if [[ -z $dateAfter || ($dateAfter < $timestamp && -n $dateAfter) ]]; then
-                    if [[ -z $dateBefore || ($dateBefore > $timestamp && -n $dateBefore) ]]; then
-                        if [[ -z $currencyFilter || ($currencyFilter == $currency && -n $currencyFilter) ]]; then
-                            echo "$trader;$timestamp;$currency;$amount"
-                        fi
+        if [[ $trader == $user ]]; then
+            if [[ -z $dateAfter || ($dateAfter < $timestamp && -n $dateAfter) ]]; then
+                if [[ -z $dateBefore || ($dateBefore > $timestamp && -n $dateBefore) ]]; then
+                    if [[ -z $currencyFilter || ($currencyFilter == $currency && -n $currencyFilter) ]]; then
+                        echo "$trader;$timestamp;$currency;$amount"
                     fi
                 fi
             fi
+        fi
     done < "$logFile"
     
 }
@@ -193,6 +193,7 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         -c)
+            
             currency="$2"
             shift 2
             ;;
@@ -215,11 +216,9 @@ check_arguments $after $before $currency
 
 for file in "${log_files[@]}"; do
     if [[ $file == *.gz ]]; then
-        gzip "$file" | check_file "$file"
+        zcat "$file" | check_file "$file"
     else
-        
         check_file "$file"
-    
     fi
 done
 
@@ -231,8 +230,9 @@ fi
 if [[ "$command" == "list" ]]; then
     for file in "${log_files[@]}"; do
         if [[ $file == *.gz ]]; then
-            gzip "$file" | process_list_command "$user" "$after" "$before" "$currency"
+            zcat "$file" | process_list_command "$user" "$after" "$before" "$currency"
         else
+            
             process_list_command "$user" "$after" "$before" "$currency"
         fi
     done
@@ -247,7 +247,7 @@ fi
 if [[ "$command" == "profit" ]]; then
     for file in "${log_files[@]}"; do
         if [[ $file == *.gz ]]; then
-            gzip "$file" | calculate_profit "$user" - "$after" "$before" "$currency"
+            zcat "$file" | calculate_profit "$user" - "$after" "$before" "$currency"
         else
             calculate_profit "$user" "$file" "$after" "$before" "$currency"
         fi
@@ -259,7 +259,7 @@ fi
 if [[ "$command" == "status" ]]; then
     for file in "${log_files[@]}"; do
         if [[ $file == *.gz ]]; then
-            gzip "$file" | print_status "$user" "$file" "$after" "$before" "$currency"
+            zcat "$file" | print_status "$user" "$file" "$after" "$before" "$currency"
         else
             print_status "$user" "$file" "$after" "$before" "$currency"
         fi
