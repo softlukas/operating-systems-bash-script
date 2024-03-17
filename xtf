@@ -45,32 +45,52 @@ print_help() {
 
 print_status() {
     local user=$user
-    local logFile=$file
+    local files="${log_files[@]}"
     local dateBefore=$before
     local dateAfter=$after
     local currencyFilter=$currency
 
-    #deklarujeme asociativne pole (nieco na styl dictionary)
     declare -A currenciesBalance
-    #IFS je oddelovac, citame postupne riadky a jednolive hodnoty
-    while IFS=';' read -r trader timestamp currency amount; do
-        if [[ $trader == $user ]]; then
-             if [[ -z $dateAfter || ($dateAfter < $timestamp && -n $dateAfter) ]]; then
-                if [[ -z $dateBefore || ($dateBefore > $timestamp && -n $dateBefore) ]]; then
-                    if [[ -z $currencyFilter || ($currencyFilter == $currency && -n $currencyFilter) ]]; then
+    for file in "${log_files[@]}"; do
+        
+        if [[ $file == *.gz ]]; then
+           
+            outputCommand="gunzip -c"
 
-                        if [[ -z ${currenciesBalance[$currency]} ]]; then
-                                currenciesBalance[$currency]=0
+        else
+            
+            outputCommand="cat"
+        fi
+            #output=$(cat "$file")
+            
+        #fi
+            #deklarujeme asociativne pole (nieco na styl dictionary)
+        
+        #IFS je oddelovac, citame postupne riadky a jednolive hodnoty
+        while IFS=';' read -r trader timestamp currency amount; do
+            if [[ $trader == $user ]]; then
+                if [[ -z $dateAfter || ($dateAfter < $timestamp && -n $dateAfter) ]]; then
+                    if [[ -z $dateBefore || ($dateBefore > $timestamp && -n $dateBefore) ]]; then
+                        if [[ -z $currencyFilter || ($currencyFilter == $currency && -n $currencyFilter) ]]; then
+
+                            if [[ -z ${currenciesBalance[$currency]} ]]; then
+                                    currenciesBalance[$currency]=0
+                            fi
+                            currenciesBalance[$currency]=$(awk "BEGIN { printf \"%0.4f\", ${currenciesBalance[$currency]} + $amount }")
                         fi
-                        currenciesBalance[$currency]=$(awk "BEGIN { printf \"%0.4f\", ${currenciesBalance[$currency]} + $amount }")
                     fi
                 fi
             fi
-        fi
-    done < $logFile
+        done < <($outputCommand "$file")
+        
+    done
     for currency in "${!currenciesBalance[@]}"; do
         echo "$currency : ${currenciesBalance[$currency]}"
-    done | sort
+    done | sort 
+
+    
+
+    
 }
 
 # Funkce pro zpracování příkazu list
@@ -257,13 +277,11 @@ if [[ "$command" == "profit" ]]; then
 fi
 
 if [[ "$command" == "status" ]]; then
-    for file in "${log_files[@]}"; do
-        if [[ $file == *.gz ]]; then
-            zcat "$file" | print_status "$user" "$file" "$after" "$before" "$currency"
-        else
-            print_status "$user" "$file" "$after" "$before" "$currency"
-        fi
-    done | sort -u
+    
+     
+    print_status "$user" "${log_files[@]}" "$after" "$before" "$currency"
+        
+  
     
 fi
 
